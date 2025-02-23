@@ -39,9 +39,26 @@ class AzureRecon:
             url = f"https://login.microsoftonline.com/{self.domain}/v2.0/.well-known/openid-configuration"
             request = Request(url, headers={"User-agent": "Mozilla/5.0"})
             with urlopen(request) as response:
-                return json.loads(response.read().decode())
-        except Exception:
-            return None
+                data = response.read().decode()
+
+                try:
+                    return json.loads(data)
+                except json.JSONDecodeError:
+                    print("ERROR: Response is not valid JSON, returning empty config.")
+                    return {}
+                
+            debug = False  # Set to True if you want to see errors
+
+        except HTTPError as e:
+            if debug:
+                print(f"ERROR: HTTP error {e.code} when accessing {url}")
+        except URLError as e:
+            if debug:
+                print(f"ERROR: URL error {e.reason} when accessing {url}")
+        except Exception as e:
+            if debug:
+                print(f"ERROR: Unexpected exception: {e}")
+                
 
     def check_sharepoint(self) -> bool:
         """Check if Sharepoint is accessible"""
@@ -616,6 +633,14 @@ def print_recon_results(results: Dict, json_output: bool = False) -> None:
     if json_output:
         print(json.dumps(results, indent=2))
         return
+    
+    azure_config = results.get("azure_ad_config", {})  
+    
+    # Safely get tenant_region_scope, defaulting to "Unknown" if missing
+    tenant_region_scope = azure_config.get("tenant_region_scope", "Unknown")
+
+    print(f"Tenant Region Scope: {tenant_region_scope}")
+
 
     print("\n[+] Target Organization:")
     if results.get("tenant"):
@@ -632,8 +657,11 @@ def print_recon_results(results: Dict, json_output: bool = False) -> None:
         print(f"Cloud Instance: {results['federation_info']['cloud_instance']}")
 
     print("\n[+] Azure AD Configuration:")
-    if results["azure_ad_config"]["tenant_region_scope"]:
-        print(f"Tenant Region: {results['azure_ad_config']['tenant_region_scope']}")
+    tenant_region_scope = results.get("azure_ad_config", {}).get("tenant_region_scope", "Unknown")
+    if tenant_region_scope != "Unknown":
+        print(f"Tenant Region: {tenant_region_scope}")
+    else:
+        print("Tenant Region Scope: Unknown")
 
     print("\n[+] Azure AD Connect Status:")
     if "aad_connect" in results:
@@ -848,7 +876,8 @@ def get_domains(args):
     
     # Get tenant ID
     tenant_id = get_tenant_id(domain)
-
+    print("DEBUG: recon_results before calling print_recon_results:")
+    print(json.dumps(recon_results, indent=4))
     # Store results
     recon_results["domains"] = domains
     recon_results["tenant"] = tenant
