@@ -17,15 +17,32 @@ import re
 from urllib.error import HTTPError, URLError
 
 class AzureRecon:
-    def __init__(self, domain: str):
+    def __init__(self, domain: str, args):
         self.domain = domain
         self.results: Dict = {}
         self.domain_prefix = domain.split('.')[0]
+        self.debug = args.debug
+        
+        self.tenant_name = ""
+        self.autodiscover = "autodiscover-s.outlook.com"
+        self.ms_login = "login.microsoftonline.com"
+        self.graph_api = "graph.windows.net"
+
+        if args.gov: 
+            self.autodiscover = "autodiscover-s.office365.us"
+            self.ms_login = "login.microsoftonline.us"
+            self.graph_api = "graph.microsoftazure.us"
+
+        elif args.cn:
+            self.autodiscover = "autodiscover-s.partner.outlook.cn"
+            self.ms_login = "login.partner.microsoftonline.cn"
+            self.graph_api = "graph.chinacloudapi.cn"
+
 
     def get_federation_info(self) -> Optional[Dict]:
         """Get Federation information for the domain"""
         try:
-            url = f"https://login.microsoftonline.com/getuserrealm.srf?login=user@{self.domain}&json=1"
+            url = f"https://{self.ms_login}/getuserrealm.srf?login=user@{self.domain}&json=1"
             request = Request(url, headers={"User-agent": "Mozilla/5.0"})
             with urlopen(request) as response:
                 data = json.loads(response.read().decode())
@@ -36,7 +53,7 @@ class AzureRecon:
     def get_azure_ad_config(self) -> Optional[Dict]:
         """Get Azure AD OpenID configuration"""
         try:
-            url = f"https://login.microsoftonline.com/{self.domain}/v2.0/.well-known/openid-configuration"
+            url = f"https://{self.ms_login}/{self.domain}/v2.0/.well-known/openid-configuration"
             request = Request(url, headers={"User-agent": "Mozilla/5.0"})
             with urlopen(request) as response:
                 data = response.read().decode()
@@ -46,19 +63,19 @@ class AzureRecon:
                 except json.JSONDecodeError:
                     print("ERROR: Response is not valid JSON, returning empty config.")
                     return {}
-                
-            debug = False  # Set to True if you want to see errors
 
         except HTTPError as e:
-            if debug:
+            if self.debug:
                 print(f"ERROR: HTTP error {e.code} when accessing {url}")
+            return {}
         except URLError as e:
-            if debug:
+            if self.debug:
                 print(f"ERROR: URL error {e.reason} when accessing {url}")
+            return {}
         except Exception as e:
-            if debug:
+            if self.debug:
                 print(f"ERROR: Unexpected exception: {e}")
-                
+            return {}
 
     def check_sharepoint(self) -> bool:
         """Check if Sharepoint is accessible"""
@@ -218,7 +235,7 @@ class AzureRecon:
         """Check tenant branding information"""
         try:
             # This endpoint returns the tenant's branding configuration
-            url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
+            url = f"https://{self.ms_login}/{tenant_id}/oauth2/v2.0/authorize"
             request = Request(url, headers={"User-agent": "Mozilla/5.0"})
             try:
                 with urlopen(request) as response:
@@ -236,7 +253,7 @@ class AzureRecon:
     def check_provisioning_endpoints(self, tenant_id: str) -> Dict:
         """Check various provisioning endpoints"""
         endpoints = {
-            "b2b": f"https://login.microsoftonline.com/{tenant_id}/B2B/invite",
+            "b2b": f"https://{self.ms_login}/{tenant_id}/B2B/invite",
             "device_registration": f"https://enterpriseregistration.windows.net/{tenant_id}/join",
             "device_management": f"https://enrollment.manage.microsoft.com/{tenant_id}/enrollmentserver/discovery.svc"
         }
@@ -259,7 +276,7 @@ class AzureRecon:
 
     def check_conditional_access(self, tenant_id: str) -> Dict:
         """Check for Conditional Access configurations"""
-        url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/devicecode"
+        url = f"https://{self.ms_login}/{tenant_id}/oauth2/v2.0/devicecode"
         try:
             request = Request(url, headers={"User-agent": "Mozilla/5.0"})
             try:
@@ -275,8 +292,8 @@ class AzureRecon:
     def check_saml_endpoints(self, tenant_id: str) -> Dict:
         """Check SAML endpoints configuration"""
         endpoints = {
-            "login": f"https://login.microsoftonline.com/{tenant_id}/saml2",
-            "federation_metadata": f"https://login.microsoftonline.com/{tenant_id}/federationmetadata/2007-06/federationmetadata.xml"
+            "login": f"https://{self.ms_login}/{tenant_id}/saml2",
+            "federation_metadata": f"https://{self.ms_login}/{tenant_id}/federationmetadata/2007-06/federationmetadata.xml"
         }
         
         results = {}
@@ -410,7 +427,7 @@ class AzureRecon:
         
         # Create a test email using the domain
         test_email = f"nonexistent@{self.domain}"
-        url = f"https://login.microsoftonline.com/getuserrealm.srf?login={test_email}"
+        url = f"https://{self.ms_login}/getuserrealm.srf?login={test_email}"
         
         try:
             response = urlopen(Request(url, headers={"User-agent": "Mozilla/5.0"}))
@@ -457,7 +474,7 @@ class AzureRecon:
         # If no tenant_id provided, try to get it from the domain
         if not tenant_id:
             try:
-                openid_url = f"https://login.microsoftonline.com/{self.domain}/v2.0/.well-known/openid-configuration"
+                openid_url = f"https://{self.ms_login}/{self.domain}/v2.0/.well-known/openid-configuration"
                 response = urlopen(Request(openid_url, headers={"User-agent": "Mozilla/5.0"}))
                 if response.status == 200:
                     data = json.loads(response.read().decode())
@@ -472,7 +489,7 @@ class AzureRecon:
             return results
 
         # Check enterprise applications endpoint
-        enterprise_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
+        enterprise_url = f"https://{self.ms_login}/{tenant_id}/oauth2/v2.0/authorize"
         try:
             response = urlopen(Request(enterprise_url, headers={"User-agent": "Mozilla/5.0"}))
             if response.status == 200:
@@ -487,7 +504,7 @@ class AzureRecon:
                     # Check each app for multi-tenant configuration
                     for app_id in app_ids:
                         try:
-                            app_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize?client_id={app_id}&response_type=id_token"
+                            app_url = f"https://{self.ms_login}/{tenant_id}/oauth2/v2.0/authorize?client_id={app_id}&response_type=id_token"
                             app_response = urlopen(Request(app_url, headers={"User-agent": "Mozilla/5.0"}))
                             if app_response.status == 200:
                                 app_content = app_response.read().decode()
@@ -500,7 +517,7 @@ class AzureRecon:
             results["enterprise_apps"]["error"] = str(e)
 
         # Check public applications and admin consent
-        public_url = f"https://login.microsoftonline.com/{tenant_id}/adminconsent"
+        public_url = f"https://{self.ms_login}/{tenant_id}/adminconsent"
         try:
             response = urlopen(Request(public_url, headers={"User-agent": "Mozilla/5.0"}))
             if response.status == 200:
@@ -514,7 +531,7 @@ class AzureRecon:
 
         # Check service principals
         try:
-            sp_url = f"https://graph.windows.net/{tenant_id}/servicePrincipals?api-version=1.6"
+            sp_url = f"https://{self.graph_api}/{tenant_id}/servicePrincipals?api-version=1.6"
             response = urlopen(Request(sp_url, headers={"User-agent": "Mozilla/5.0"}))
             if response.status == 200:
                 content = response.read().decode()
@@ -528,7 +545,7 @@ class AzureRecon:
 
         # Check OAuth permissions and grants
         try:
-            manifest_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize?client_id=common&response_type=id_token&scope=openid profile"
+            manifest_url = f"https://{self.ms_login}/{tenant_id}/oauth2/v2.0/authorize?client_id=common&response_type=id_token&scope=openid profile"
             response = urlopen(Request(manifest_url, headers={"User-agent": "Mozilla/5.0"}))
             if response.status == 200:
                 content = response.read().decode()
@@ -548,6 +565,90 @@ class AzureRecon:
 
         return results
 
+    def get_tenant_id(self):
+        try:
+            url = f"https://{self.ms_login}/{self.domain}/v2.0/.well-known/openid-configuration"
+            request = Request(url, headers={"User-agent": "Mozilla/5.0"})
+            with urlopen(request) as response:
+                data = json.loads(response.read().decode())
+                # Extract tenant ID from the token endpoint instead of issuer
+                token_endpoint = data.get("token_endpoint", "")
+                tenant_id = token_endpoint.split("/")[3] if token_endpoint else None
+                return tenant_id if tenant_id != "v2.0" else None
+        except Exception:
+            return None
+
+    def get_domains(self, domain): 
+        # Create a valid HTTP request
+        # Example from: https://github.com/thalpius/Microsoft-Defender-for-Identity-Check-Instance.
+        body = f"""<?xml version="1.0" encoding="utf-8"?>
+        <soap:Envelope xmlns:exm="http://schemas.microsoft.com/exchange/services/2006/messages" 
+            xmlns:ext="http://schemas.microsoft.com/exchange/services/2006/types" 
+            xmlns:a="http://www.w3.org/2005/08/addressing" 
+            xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" 
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+            <soap:Header>
+                <a:RequestedServerVersion>Exchange2010</a:RequestedServerVersion>
+                <a:MessageID>urn:uuid:6389558d-9e05-465e-ade9-aae14c4bcd10</a:MessageID>
+                <a:Action soap:mustUnderstand="1">http://schemas.microsoft.com/exchange/2010/Autodiscover/Autodiscover/GetFederationInformation</a:Action>
+                <a:To soap:mustUnderstand="1">https://autodiscover.byfcxu-dom.extest.microsoft.com/autodiscover/autodiscover.svc</a:To>
+                <a:ReplyTo>
+                <a:Address>http://www.w3.org/2005/08/addressing/anonymous</a:Address>
+                </a:ReplyTo>
+            </soap:Header>
+            <soap:Body>
+                <GetFederationInformationRequestMessage xmlns="http://schemas.microsoft.com/exchange/2010/Autodiscover">
+                <Request>
+                    <Domain>{domain}</Domain>
+                </Request>
+                </GetFederationInformationRequestMessage>
+            </soap:Body>
+        </soap:Envelope>"""
+
+        # Including HTTP headers
+        headers = {
+            "Content-type": "text/xml; charset=utf-8",
+            "User-agent": "AutodiscoverClient"
+        }
+
+        url = f"https://{self.autodiscover}/autodiscover/autodiscover.svc"
+
+        # Perform HTTP request
+        try:
+            httprequest = Request(
+                url, headers=headers, data=body.encode())
+
+            with urlopen(httprequest) as response:
+                response = response.read().decode()
+        except Exception:
+            if args.json: 
+                print(json.dumps({"error":"Unable to execute request. Wrong domain"},indent=1))
+            else:
+                print("[-] Unable to execute request. Wrong domain?")
+            exit()
+        #print(response)
+        # Parse XML response
+        self.domains = []
+
+        tree = ET.fromstring(response)
+        for elem in tree.iter():
+            if elem.tag == "{http://schemas.microsoft.com/exchange/2010/Autodiscover}Domain":
+                self.domains.append(elem.text)
+
+        # Get tenant name
+        self.tenant_name = ""
+        for domain in self.domains:
+            if "onmicrosoft.com" in domain or "partner.onmschina.cn" in domain or "onmicrosoft.us" in domain:
+                self.tenant_name = domain.split(".")[0]
+
+    def check_mdi(self, tenant):
+        tenant += ".atp.azure.com"
+        try:
+            dns.resolver.resolve(tenant)
+            return True
+        except Exception:
+            return False
+
     def check_mdi_instance(self) -> Dict[str, Any]:
         """Check for Microsoft Defender for Identity instance"""
         results = {
@@ -557,10 +658,7 @@ class AzureRecon:
         }
         
         try:
-            # Check for MDI sensor endpoint
-            mdi_url = f"https://sensor.atp.azure.com/test/{self.domain}"
-            response = urlopen(Request(mdi_url, headers={"User-agent": "Mozilla/5.0"}))
-            if response.status == 200:
+            if self.check_mdi(self.tenant_name):
                 results["detected"] = True
                 results["details"] = "MDI instance active"
                 results["redteam_implications"] = [
@@ -577,6 +675,8 @@ class AzureRecon:
         """Run all reconnaissance checks"""
         # Get federation info
         fed_info = self.get_federation_info()
+        self.get_domains(self.domain)
+        self.tenant_id = self.get_tenant_id()
         results = {
             "federation_info": {
                 "name_space_type": fed_info.get("NameSpaceType") if fed_info else None,
@@ -600,7 +700,10 @@ class AzureRecon:
                 "b2c_configuration": self.check_b2c_configuration(self.domain)
             },
             "communication_services": self.check_teams_presence(),
-            "mdi_instance": self.check_mdi_instance()
+            "mdi_instance": self.check_mdi_instance(),
+            "domains": self.domains, 
+            "tenant": self.tenant_name, 
+            "tenant_id": self.tenant_id
         }
 
         # Determine if using Microsoft 365
@@ -633,14 +736,11 @@ def print_recon_results(results: Dict, json_output: bool = False) -> None:
     if json_output:
         print(json.dumps(results, indent=2))
         return
-    
+
     azure_config = results.get("azure_ad_config", {})  
-    
     # Safely get tenant_region_scope, defaulting to "Unknown" if missing
     tenant_region_scope = azure_config.get("tenant_region_scope", "Unknown")
-
     print(f"Tenant Region Scope: {tenant_region_scope}")
-
 
     print("\n[+] Target Organization:")
     if results.get("tenant"):
@@ -797,124 +897,22 @@ def print_recon_results(results: Dict, json_output: bool = False) -> None:
             print(f"  Error checking AAD applications: {results['aad_applications']['error']}")
 
 # Get domains
-def get_domains(args):
+def main(args):
     domain = args.domain
     json_out = {}
 
-    # Run reconnaissance first
-    recon = AzureRecon(domain)
-    recon_results = recon.run_all_checks()
-    
     if not args.json:
         print("\n[+] Running Azure/M365 Reconnaissance...")
     
-    # Create a valid HTTP request
-    # Example from: https://github.com/thalpius/Microsoft-Defender-for-Identity-Check-Instance.
-    body = f"""<?xml version="1.0" encoding="utf-8"?>
-    <soap:Envelope xmlns:exm="http://schemas.microsoft.com/exchange/services/2006/messages" 
-        xmlns:ext="http://schemas.microsoft.com/exchange/services/2006/types" 
-        xmlns:a="http://www.w3.org/2005/08/addressing" 
-        xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" 
-        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-        <soap:Header>
-            <a:RequestedServerVersion>Exchange2010</a:RequestedServerVersion>
-            <a:MessageID>urn:uuid:6389558d-9e05-465e-ade9-aae14c4bcd10</a:MessageID>
-            <a:Action soap:mustUnderstand="1">http://schemas.microsoft.com/exchange/2010/Autodiscover/Autodiscover/GetFederationInformation</a:Action>
-            <a:To soap:mustUnderstand="1">https://autodiscover.byfcxu-dom.extest.microsoft.com/autodiscover/autodiscover.svc</a:To>
-            <a:ReplyTo>
-            <a:Address>http://www.w3.org/2005/08/addressing/anonymous</a:Address>
-            </a:ReplyTo>
-        </soap:Header>
-        <soap:Body>
-            <GetFederationInformationRequestMessage xmlns="http://schemas.microsoft.com/exchange/2010/Autodiscover">
-            <Request>
-                <Domain>{domain}</Domain>
-            </Request>
-            </GetFederationInformationRequestMessage>
-        </soap:Body>
-    </soap:Envelope>"""
+    # Run reconnaissance first
+    recon = AzureRecon(domain, args)
+    recon_results = recon.run_all_checks()
 
-    # Including HTTP headers
-    headers = {
-        "Content-type": "text/xml; charset=utf-8",
-        "User-agent": "AutodiscoverClient"
-    }
-
-    url = "https://autodiscover-s.outlook.com/autodiscover/autodiscover.svc"
-    if args.gov: 
-        url = "https://autodiscover-s.office365.us/autodiscover/autodiscover.svc"
-    elif args.cn:
-        url = "https://autodiscover-s.partner.outlook.cn/autodiscover/autodiscover.svc"
-
-    # Perform HTTP request
-    try:
-        httprequest = Request(
-            url, headers=headers, data=body.encode())
-
-        with urlopen(httprequest) as response:
-            response = response.read().decode()
-    except Exception:
-        if args.json: 
-            print(json.dumps({"error":"Unable to execute request. Wrong domain"},indent=1))
-        else:
-            print("[-] Unable to execute request. Wrong domain?")
-        exit()
-    #print(response)
-    # Parse XML response
-    domains = []
-
-    tree = ET.fromstring(response)
-    for elem in tree.iter():
-        if elem.tag == "{http://schemas.microsoft.com/exchange/2010/Autodiscover}Domain":
-            domains.append(elem.text)
-
-    # Get tenant name
-    tenant = ""
-    for domain in domains:
-        if "onmicrosoft.com" in domain:
-            tenant = domain.split(".")[0]
-    
-    # Get tenant ID
-    tenant_id = get_tenant_id(domain)
-    print("DEBUG: recon_results before calling print_recon_results:")
-    print(json.dumps(recon_results, indent=4))
-    # Store results
-    recon_results["domains"] = domains
-    recon_results["tenant"] = tenant
-    recon_results["tenant_id"] = tenant_id
-    
     if not args.json:
         print_recon_results(recon_results)
     else:
         print(json.dumps(recon_results, indent=2))
 
-
-# Get tenant ID
-def get_tenant_id(domain):
-    try:
-        url = f"https://login.microsoftonline.com/{domain}/v2.0/.well-known/openid-configuration"
-        request = Request(url, headers={"User-agent": "Mozilla/5.0"})
-        with urlopen(request) as response:
-            data = json.loads(response.read().decode())
-            # Extract tenant ID from the token endpoint instead of issuer
-            token_endpoint = data.get("token_endpoint", "")
-            tenant_id = token_endpoint.split("/")[3] if token_endpoint else None
-            return tenant_id if tenant_id != "v2.0" else None
-    except Exception:
-        return None
-
-
-# Identify MDI usage
-def check_mdi(tenant):
-
-    tenant += ".atp.azure.com"
-
-    # Check if MDI instance exists
-    try:
-        dns.resolver.resolve(tenant)
-        return True
-    except Exception:
-        return False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -924,8 +922,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "-j", "--json", action="store_true", help="output in JSON format", required=False)
     parser.add_argument(
-        "--gov", action="store_true", help="query government tenancy", required=False)
+        "--gov", default=False, action="store_true", help="query government tenancy", required=False)
     parser.add_argument(
-        "--cn", action="store_true", help="query chinese tenancy", required=False)
+        "--cn", default=False, action="store_true", help="query chinese tenancy", required=False)
+    parser.add_argument(
+        "--debug", default=False, action="store_true", help="enable debug mode", required=False)
     args = parser.parse_args()
-    get_domains(args)
+    main(args)
