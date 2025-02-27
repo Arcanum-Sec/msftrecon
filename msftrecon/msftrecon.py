@@ -916,16 +916,15 @@ def check_mdi(tenant):
     except Exception:
         return False
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Enumerates valid Microsoft 365 domains, retrieves tenant name, and checks for MDI instance")
-    parser.add_argument(
-        "-d", "--domain", help="input domain name, example format: example.com", required=True)
-    parser.add_argument(
-        "-j", "--json", action="store_true", help="output in JSON format", required=False)
-    parser.add_argument(
-        "--gov", action="store_true", help="query government tenancy", required=False)
-    parser.add_argument(
-        "--cn", action="store_true", help="query chinese tenancy", required=False)
+    parser.add_argument("-d", "--domain", help="input domain name, example format: example.com", required=True)
+    parser.add_argument("-j", "--json", action="store_true", help="output in JSON format", required=False)
+    parser.add_argument("--gov", action="store_true", help="query government tenancy", required=False)
+    parser.add_argument("--cn", action="store_true", help="query chinese tenancy", required=False)
     args = parser.parse_args()
     get_domains(args)
+
+if __name__ == "__main__":
+    main()
