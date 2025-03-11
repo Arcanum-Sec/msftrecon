@@ -876,8 +876,9 @@ def get_domains(args):
     
     # Get tenant ID
     tenant_id = get_tenant_id(domain)
-    print("DEBUG: recon_results before calling print_recon_results:")
-    print(json.dumps(recon_results, indent=4))
+    if not args.json:
+        print("DEBUG: recon_results before calling print_recon_results:")
+        print(json.dumps(recon_results, indent=4))
     # Store results
     recon_results["domains"] = domains
     recon_results["tenant"] = tenant
